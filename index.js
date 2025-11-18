@@ -28,6 +28,7 @@ async function run() {
   try {
     const productsCollection = client.db("shopeEase").collection("products");
     const usersCollection = client.db("shopeEase").collection("users");
+    const cartCollection = client.db("shopeEase").collection("cartProducts");
 
     app.post("/users", async (req, res) => {
       const user = req.body;
@@ -45,7 +46,6 @@ async function run() {
         data: result,
       });
     });
-
 
     app.get("/products", async (req, res) => {
       try {
@@ -73,14 +73,6 @@ async function run() {
           .toArray();
 
         const total = await productsCollection.countDocuments(query);
-        console.log(
-          "✅ DB Count:",
-          total,
-          "👉 limit:",
-          limit,
-          "👉 totalPages:",
-          Math.ceil(total / limit)
-        );
 
         res.send({
           products,
@@ -94,6 +86,17 @@ async function run() {
       }
     });
 
+    app.post("/cartProduct", async (req, res) => {
+      try {
+        const product = req.body;
+        const result = await cartCollection.insertOne(product);
+        // Respond with the real insertedId
+        res.send({ insertedId: result.insertedId });
+      } catch (error) {
+        console.error("Error inserting cart product:", error);
+        res.status(500).send({ error: "Failed to add product to cart" });
+      }
+    });
     // Connect the client to the server	(optional starting in v4.7)
     // await client.connect();
     // Send a ping to confirm a successful connection
