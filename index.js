@@ -29,6 +29,7 @@ async function run() {
     const productsCollection = client.db("shopeEase").collection("products");
     const usersCollection = client.db("shopeEase").collection("users");
     const cartCollection = client.db("shopeEase").collection("cartProducts");
+    const orderCollection = client.db("shopeEase").collection("ordered");
 
     app.post("/users", async (req, res) => {
       const user = req.body;
@@ -45,6 +46,19 @@ async function run() {
         inserted: true,
         data: result,
       });
+    });
+
+    app.get("/product/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const result = await productsCollection.findOne({
+          _id: new ObjectId(id),
+        });
+        res.send(result);
+        // console.log(result);
+      } catch (error) {
+        console.error("❌ Error fetching products:", error);
+      }
     });
 
     app.get("/products", async (req, res) => {
@@ -86,6 +100,8 @@ async function run() {
       }
     });
 
+    // *Added to cart product
+
     app.post("/cartProduct", async (req, res) => {
       try {
         const product = req.body;
@@ -97,10 +113,25 @@ async function run() {
         res.status(500).send({ error: "Failed to add product to cart" });
       }
     });
+
+    // *Ordered Product
+
+    app.post("/order", async (req, res) => {
+      try {
+        const product = req.body;
+        console.log("ORDER RECEIVED:", product);
+        const result = await orderCollection.insertOne(product);
+        res.send(result);
+      } catch (error) {
+        console.log("ordered fetching error");
+        res.status(500).send({ error: "Failed to ordered" });
+      }
+    });
+
     // Connect the client to the server	(optional starting in v4.7)
     // await client.connect();
     // Send a ping to confirm a successful connection
-    await client.db("admin").command({ ping: 1 });
+    // await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
     );
