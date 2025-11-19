@@ -67,9 +67,7 @@ async function run() {
 
         page = parseInt(page);
         limit = parseInt(limit);
-
         const query = {};
-
         if (category && category.toLowerCase() !== "all") {
           query.category = { $regex: `^${category}$`, $options: "i" };
         }
@@ -77,9 +75,7 @@ async function run() {
         if (search) {
           query.name = { $regex: search, $options: "i" };
         }
-
         const skip = (page - 1) * limit;
-
         const products = await productsCollection
           .find(query)
           .skip(skip)
@@ -87,7 +83,6 @@ async function run() {
           .toArray();
 
         const total = await productsCollection.countDocuments(query);
-
         res.send({
           products,
           total,
