@@ -60,6 +60,15 @@ async function run() {
         console.error("❌ Error fetching products:", error);
       }
     });
+    app.get("/product", async (req, res) => {
+      try {
+        const result = await productsCollection.find().toArray();
+        res.send(result );
+      } catch (error) {
+        console.error("❌ Error fetching products:", error);
+        res.status(500).send({ message: "Error fetching products", error });
+      }
+    });
 
     app.get("/products", async (req, res) => {
       try {
