@@ -3,6 +3,7 @@ const app = express();
 const cors = require("cors");
 const port = 3000;
 require("dotenv").config();
+const stripe = require("stripe")(`${process.env.STRIPE_SECRET_KEY}`);
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 // middleware
@@ -30,6 +31,7 @@ async function run() {
     const usersCollection = client.db("shopeEase").collection("users");
     const cartCollection = client.db("shopeEase").collection("cartProducts");
     const orderCollection = client.db("shopeEase").collection("ordered");
+    const paymentCollection = client.db("shopeEase").collection("payments");
 
     app.post("/users", async (req, res) => {
       const user = req.body;
@@ -63,7 +65,7 @@ async function run() {
     app.get("/product", async (req, res) => {
       try {
         const result = await productsCollection.find().toArray();
-        res.send(result );
+        res.send(result);
       } catch (error) {
         console.error("❌ Error fetching products:", error);
         res.status(500).send({ message: "Error fetching products", error });
@@ -72,19 +74,25 @@ async function run() {
 
     app.get("/products", async (req, res) => {
       try {
-        let { category, search, page = 1, limit = 12 } = req.query;
+        let { category = "all", search = "", page = 1, limit = 12 } = req.query;
 
-        page = parseInt(page);
-        limit = parseInt(limit);
+        page = Number(page);
+        limit = Number(limit);
+
         const query = {};
-        if (category && category.toLowerCase() !== "all") {
+
+        // ✅ Category filter
+        if (category !== "all") {
           query.category = { $regex: `^${category}$`, $options: "i" };
         }
 
+        // ✅ Search filter
         if (search) {
           query.name = { $regex: search, $options: "i" };
         }
+
         const skip = (page - 1) * limit;
+
         const products = await productsCollection
           .find(query)
           .skip(skip)
@@ -92,6 +100,7 @@ async function run() {
           .toArray();
 
         const total = await productsCollection.countDocuments(query);
+
         res.send({
           products,
           total,
@@ -99,14 +108,14 @@ async function run() {
           totalPages: Math.ceil(total / limit),
         });
       } catch (error) {
-        console.error("❌ Error fetching products:", error);
-        res.status(500).send({ message: "Error fetching products", error });
+        console.error("❌ Products Fetch Error:", error);
+        res.status(500).send({ message: "Server error" });
       }
     });
 
     // *Added to cart product
 
-    app.post("/cartProduct", async (req, res) => {
+    app.post("/cart", async (req, res) => {
       try {
         const product = req.body;
         const result = await cartCollection.insertOne(product);
@@ -116,6 +125,19 @@ async function run() {
         console.error("Error inserting cart product:", error);
         res.status(500).send({ error: "Failed to add product to cart" });
       }
+    });
+
+    app.get("/cart", async (req, res) => {
+      const email = req.query.email;
+      console.log(email);
+      const result = await cartCollection.find({ userEmail: email }).toArray();
+      res.send(result);
+    });
+
+    app.delete("/cart/:id", async (req, res) => {
+      const id = req.params.id;
+      const result = await cartCollection.deleteOne({ _id: new ObjectId(id) });
+      res.send(result);
     });
 
     // *Ordered Product
@@ -129,6 +151,160 @@ async function run() {
       } catch (error) {
         console.log("ordered fetching error");
         res.status(500).send({ error: "Failed to ordered" });
+      }
+    });
+
+    app.get("/order/:orderId", async (req, res) => {
+      const id = req.params.orderId;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({ error: "Invalid order ID" });
+      }
+
+      try {
+        const order = await orderCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!order) {
+          return res.status(404).send({ error: "order not found" });
+        }
+
+        res.send(order);
+      } catch (err) {
+        console.error("Error fetching order:", err);
+        res.status(500).send({ error: "Server error" });
+      }
+    });
+
+    app.get("/orders", async (req, res) => {
+      try {
+        const email = req.query.email;
+        console.log(email);
+
+        if (!email) {
+          return res.status(400).json({ error: "Email is required" });
+        }
+
+        const orders = await orderCollection
+          .find({ customer_email: email })
+          .sort({ date: -1 })
+          .toArray();
+
+        res.send(orders);
+      } catch (error) {
+        console.error("Orders fetch failed:", error);
+        res.status(500).json({ error: "Failed to fetch orders" });
+      }
+    });
+
+    // Cancel Order
+    app.delete("/order/:orderId", async (req, res) => {
+      const { orderId } = req.params;
+
+      if (!ObjectId.isValid(orderId)) {
+        return res.status(400).json({ error: "Invalid order ID" });
+      }
+
+      try {
+        const order = await orderCollection.findOne({
+          _id: new ObjectId(orderId),
+        });
+
+        if (!order) {
+          return res.status(404).json({ error: "Order not found" });
+        }
+
+        if (order.payment_status === "Paid") {
+          return res
+            .status(400)
+            .json({ error: "Cannot cancel an already paid order" });
+        }
+
+        const result = await orderCollection.deleteOne({
+          _id: new ObjectId(orderId),
+        });
+        res.json(result);
+      } catch (err) {
+        console.error("Cancel order failed:", err);
+        res.status(500).json({ error: "Server error" });
+      }
+    });
+
+    // *payment
+    app.post("/create-payment-intent", async (req, res) => {
+      try {
+        const { orderId, amountInCents } = req.body;
+
+        if (!orderId || !amountInCents) {
+          return res
+            .status(400)
+            .json({ error: "orderId & amountInCents required" });
+        }
+
+        let objectId;
+        try {
+          objectId = new ObjectId(orderId);
+        } catch {
+          return res.status(400).json({ error: "Invalid orderId format" });
+        }
+
+        const order = await orderCollection.findOne({ _id: objectId });
+        if (!order) return res.status(404).json({ error: "Order not found" });
+
+        const expectedAmount = order.totalPrice * 100;
+        if (expectedAmount !== amountInCents) {
+          return res
+            .status(400)
+            .json({ error: "Amount mismatch. Payment blocked." });
+        }
+
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: expectedAmount,
+          currency: "usd",
+          automatic_payment_methods: { enabled: true },
+          metadata: {
+            orderId: orderId,
+            email: order.customer_email,
+            customer_name: order.customer_name,
+          },
+        });
+
+        res.json({ clientSecret: paymentIntent.client_secret });
+      } catch (err) {
+        console.error("PaymentIntent Error:", err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    app.post("/payments", async (req, res) => {
+      try {
+        const { orderId, amount, customer_email, transactionId, method } =
+          req.body;
+
+        const paymentData = {
+          orderId,
+          amount,
+          customer_email,
+          transactionId,
+          method,
+          paid_at: new Date(),
+          paid_at_string: new Date().toISOString(),
+        };
+
+        // Save payment record
+        const insertResult = await paymentCollection.insertOne(paymentData);
+
+        // Update order payment status
+        await orderCollection.updateOne(
+          { _id: new ObjectId(orderId) },
+          { $set: { payment_status: "Paid" } }
+        );
+
+        res.send(insertResult);
+      } catch (error) {
+        console.error("Payment save failed:", error);
+        res.status(500).send({ error: "Payment saving failed" });
       }
     });
 
