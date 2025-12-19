@@ -5,6 +5,8 @@ const port = 3000;
 require("dotenv").config();
 const stripe = require("stripe")(`${process.env.STRIPE_SECRET_KEY}`);
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const jwt = require("jsonwebtoken");
+const { default: verifyToken } = require("./Middleware/VerifyToken");
 
 // middleware
 app.use(express.json());
@@ -33,7 +35,7 @@ async function run() {
     const orderCollection = client.db("shopeEase").collection("ordered");
     const paymentCollection = client.db("shopeEase").collection("payments");
 
-    app.post("/users", async (req, res) => {
+    app.post("/auth/register", async (req, res) => {
       const user = req.body;
       const existingUser = await usersCollection.findOne({ email: user.email });
       if (existingUser) {
@@ -49,6 +51,26 @@ async function run() {
         data: result,
       });
     });
+    app.post("/auth/login", async (req, res) => {
+      const { email } = req.body;
+
+      const user = await usersCollection.findOne({ email });
+      if (!user) return res.status(401).send({ message: "Invalid user" });
+
+      // 🔐 JWT
+      const token = jwt.sign(
+        {
+          id: user._id,
+          email: user.email,
+          role: user.role, // 🔥 critical
+        },
+        process.env.JWT_SECRET,
+        { expiresIn: "7d" }
+      );
+
+      res.send({ token });
+    });
+
 
     app.get("/product/:id", async (req, res) => {
       try {
@@ -72,7 +94,7 @@ async function run() {
       }
     });
 
-    app.get("/products", async (req, res) => {
+    app.get("/products", verifyToken, async (req, res) => {
       try {
         let { category = "all", search = "", page = 1, limit = 12 } = req.query;
 
