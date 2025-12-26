@@ -6,7 +6,6 @@ require("dotenv").config();
 const stripe = require("stripe")(`${process.env.STRIPE_SECRET_KEY}`);
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const jwt = require("jsonwebtoken");
-const { default: verifyToken } = require("./Middleware/VerifyToken");
 
 // middleware
 app.use(express.json());
@@ -15,6 +14,21 @@ app.use(cors());
 app.get("/", (req, res) => {
   res.send("Welcome to shopeEase server");
 });
+
+const VerifyToken = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader) return res.status(401).send({ message: "Unauthorized" });
+
+  const token = authHeader.split(" ")[1];
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if (err) return res.status(403).send({ message: "Invalid token" });
+
+    req.decoded = decoded; // 🔥 id, email, role
+    next();
+  });
+};
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.ra0uaai.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
@@ -70,9 +84,84 @@ async function run() {
 
       res.send({ token });
     });
+    // GET user role
+    app.get("/users/role", VerifyToken, async (req, res) => {
+      const email = req.query.email;
 
+      if (email !== req.decoded.email) {
+        return res.status(403).json({ message: "Forbidden access" });
+      }
 
-    app.get("/product/:id", async (req, res) => {
+      const user = await usersCollection.findOne({ email: email });
+
+      res.json({ role: user?.role });
+    });
+
+    // Admin state
+    app.get("/admin/stats", VerifyToken, async (req, res) => {
+      try {
+        // Optional: check if user is admin
+        const adminUser = await usersCollection.findOne({
+          email: req.decoded.email,
+        });
+        if (!adminUser || adminUser.role !== "admin") {
+          return res.status(403).json({ message: "Forbidden access" });
+        }
+
+        const totalUsers = await usersCollection.countDocuments();
+        const totalOrders = await orderCollection.countDocuments();
+        const totalRevenueAgg = await orderCollection
+          .aggregate([
+            { $group: { _id: null, total: { $sum: "$totalPrice" } } },
+          ])
+          .toArray();
+        const totalRevenue = totalRevenueAgg[0]?.total || 0;
+
+        // Monthly Orders
+        const monthlyOrdersAgg = await orderCollection
+          .aggregate([
+            {
+              $group: {
+                _id: { $month: "$createdAt" },
+                orders: { $sum: 1 },
+              },
+            },
+            { $sort: { _id: 1 } },
+          ])
+          .toArray();
+
+        const monthNames = [
+          "Jan",
+          "Feb",
+          "Mar",
+          "Apr",
+          "May",
+          "Jun",
+          "Jul",
+          "Aug",
+          "Sep",
+          "Oct",
+          "Nov",
+          "Dec",
+        ];
+        const monthlyOrders = monthlyOrdersAgg.map((item) => ({
+          month: monthNames[item._id - 1],
+          orders: item.orders,
+        }));
+
+        res.json({
+          totalUsers,
+          totalOrders,
+          totalRevenue,
+          monthlyOrders,
+        });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Server Error" });
+      }
+    });
+
+    app.get("/product/:id", VerifyToken, async (req, res) => {
       try {
         const id = req.params.id;
         const result = await productsCollection.findOne({
@@ -94,7 +183,7 @@ async function run() {
       }
     });
 
-    app.get("/products", verifyToken, async (req, res) => {
+    app.get("/products", async (req, res) => {
       try {
         let { category = "all", search = "", page = 1, limit = 12 } = req.query;
 
@@ -149,14 +238,13 @@ async function run() {
       }
     });
 
-    app.get("/cart", async (req, res) => {
+    app.get("/cart", VerifyToken, async (req, res) => {
       const email = req.query.email;
-      console.log(email);
       const result = await cartCollection.find({ userEmail: email }).toArray();
       res.send(result);
     });
 
-    app.delete("/cart/:id", async (req, res) => {
+    app.delete("/cart/:id", VerifyToken, async (req, res) => {
       const id = req.params.id;
       const result = await cartCollection.deleteOne({ _id: new ObjectId(id) });
       res.send(result);
@@ -167,7 +255,6 @@ async function run() {
     app.post("/order", async (req, res) => {
       try {
         const product = req.body;
-        console.log("ORDER RECEIVED:", product);
         const result = await orderCollection.insertOne(product);
         res.send(result);
       } catch (error) {
@@ -176,7 +263,7 @@ async function run() {
       }
     });
 
-    app.get("/order/:orderId", async (req, res) => {
+    app.get("/order/:orderId", VerifyToken, async (req, res) => {
       const id = req.params.orderId;
 
       if (!ObjectId.isValid(id)) {
@@ -199,7 +286,7 @@ async function run() {
       }
     });
 
-    app.get("/orders", async (req, res) => {
+    app.get("/orders", VerifyToken, async (req, res) => {
       try {
         const email = req.query.email;
         console.log(email);
@@ -221,7 +308,7 @@ async function run() {
     });
 
     // Cancel Order
-    app.delete("/order/:orderId", async (req, res) => {
+    app.delete("/order/:orderId", VerifyToken, async (req, res) => {
       const { orderId } = req.params;
 
       if (!ObjectId.isValid(orderId)) {
