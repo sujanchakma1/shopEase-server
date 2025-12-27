@@ -160,19 +160,22 @@ async function run() {
         res.status(500).json({ message: "Server Error" });
       }
     });
+    app.get("/admin/users", VerifyToken, async (req, res) => {
+      const users = await usersCollection.find().toArray();
 
-    app.get("/product/:id", VerifyToken, async (req, res) => {
-      try {
-        const id = req.params.id;
-        const result = await productsCollection.findOne({
-          _id: new ObjectId(id),
-        });
-        res.send(result);
-        // console.log(result);
-      } catch (error) {
-        console.error("❌ Error fetching products:", error);
-      }
+      res.json(users);
     });
+
+    // Product
+    app.post("/products", VerifyToken, async (req, res) => {
+      const product = {
+        ...req.body,
+      };
+
+      const result = await productsCollection.insertOne(product);
+      res.json(result);
+    });
+
     app.get("/product", async (req, res) => {
       try {
         const result = await productsCollection.find().toArray();
@@ -222,6 +225,36 @@ async function run() {
         console.error("❌ Products Fetch Error:", error);
         res.status(500).send({ message: "Server error" });
       }
+    });
+    app.get("/product/:id", VerifyToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const result = await productsCollection.findOne({
+          _id: new ObjectId(id),
+        });
+        res.send(result);
+      } catch (error) {
+        console.error("❌ Error fetching products:", error);
+      }
+    });
+    app.delete("/products/:id", VerifyToken, async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await productsCollection.deleteOne(query);
+      res.send(result);
+    });
+    app.patch("/products/:id", async (req, res) => {
+      const id = req.params.id;
+      const updatedData = req.body;
+
+      const result = await productsCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: updatedData,
+        }
+      );
+
+      res.send(result);
     });
 
     // *Added to cart product
@@ -286,7 +319,7 @@ async function run() {
       }
     });
 
-    app.get("/orders", VerifyToken, async (req, res) => {
+    app.get("/order", VerifyToken, async (req, res) => {
       try {
         const email = req.query.email;
         console.log(email);
@@ -305,6 +338,10 @@ async function run() {
         console.error("Orders fetch failed:", error);
         res.status(500).json({ error: "Failed to fetch orders" });
       }
+    });
+    app.get("/orders", VerifyToken, async (req, res) => {
+      const orders = await orderCollection.find().sort({ date: -1 }).toArray();
+      res.send(orders);
     });
 
     // Cancel Order
@@ -338,6 +375,22 @@ async function run() {
         console.error("Cancel order failed:", err);
         res.status(500).json({ error: "Server error" });
       }
+    });
+    app.patch("/order/confirm/:id", VerifyToken, async (req, res) => {
+      const id = req.params.id;
+
+      const order = await orderCollection.findOne({ _id: new ObjectId(id) });
+
+      const result = await orderCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: {
+            confirmation_status: "confirmed",
+          },
+        }
+      );
+
+      res.send(result);
     });
 
     // *payment
